@@ -73,8 +73,11 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--sparsification', action='store_true')
+parser.add_argument('--randk', type=float, default=1)
 
 best_acc1 = 0
+global_step = 0
 
 
 def main():
@@ -114,6 +117,7 @@ def main():
 
 def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
+    global global_step
     args.gpu = gpu
 
     if args.gpu is not None:
@@ -148,22 +152,23 @@ def main_worker(gpu, ngpus_per_node, args):
             # ourselves based on the total number of GPUs we have
             args.batch_size = int(args.batch_size / ngpus_per_node)
             args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+#             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
             # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
+#             model = torch.nn.parallel.DistributedDataParallel(model)
     elif args.gpu is not None:
         torch.cuda.set_device(args.gpu)
         model = model.cuda(args.gpu)
     else:
         # DataParallel will divide and allocate batch_size to all available GPUs
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
+#             model.features = torch.nn.DataParallel(model.features)
             model.cuda()
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            pass
+#             model = torch.nn.DataParallel(model).cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -189,7 +194,7 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    cudnn.benchmark = True
+    cudnn.benchmark = False
 
     # Data loading code
     traindir = os.path.join(args.data, 'train')
@@ -233,7 +238,10 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
-
+        
+        if args.sparsification:
+            args.epsilon = [torch.zeros(layer.numel()).cuda(args.gpu) for layer in model.parameters()]
+        
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
 
@@ -291,6 +299,30 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
+        
+        
+        if args.sparsification:
+            for index, (name, layer) in enumerate(model.named_parameters()):
+                flatten_grad = layer.grad.data.view(-1)
+                flatten_grad.add_(args.epsilon[index])
+                torch.cuda.manual_seed_all(hash(name) + global_step)
+                mask = torch.cuda.FloatTensor(flatten_grad.shape).uniform_(0, 1).ge(1-args.randk)
+                rand_k = flatten_grad.masked_select(mask)
+                args.epsilon[index] = flatten_grad.masked_fill(mask, 0).requires_grad_(False)
+                if rand_k.numel() > 0:
+                    dist.all_reduce(rand_k)
+                    rand_k /= float(args.world_size)
+                    flatten_grad.zero_().masked_scatter_(mask, rand_k)
+                else:
+                    flatten_grad.zero_()
+        else:
+            for layer in model.parameters():
+                dist.all_reduce(layer.grad.data)
+                layer.grad.data /= args.world_size
+        
+        
+        
+        
         optimizer.step()
 
         # measure elapsed time
