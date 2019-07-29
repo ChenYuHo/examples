@@ -117,7 +117,6 @@ def main():
 
 def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
-    global global_step
     args.gpu = gpu
 
     if args.gpu is not None:
@@ -264,6 +263,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
+    global global_step
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
