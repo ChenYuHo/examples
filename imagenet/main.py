@@ -305,6 +305,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             for index, (name, layer) in enumerate(model.named_parameters()):
                 flatten_grad = layer.grad.data.view(-1)
                 flatten_grad.add_(args.epsilon[index])
+                # set the environment variable PYTHONHASHSEED=0 so hash value is the same across processes
                 torch.cuda.manual_seed_all(hash(name) + global_step)
                 mask = torch.cuda.FloatTensor(flatten_grad.shape).uniform_(0, 1).ge(1-args.randk)
                 rand_k = flatten_grad.masked_select(mask)
@@ -315,11 +316,12 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
                     flatten_grad.zero_().masked_scatter_(mask, rand_k)
                 else:
                     flatten_grad.zero_()
+            torch.cuda.seed_all()
         else:
             for layer in model.parameters():
                 dist.all_reduce(layer.grad.data)
                 layer.grad.data /= args.world_size
-        
+        global_step+=1
         
         
         
