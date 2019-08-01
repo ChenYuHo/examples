@@ -124,7 +124,6 @@ def main():
 
 def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
-    global global_step
     args.gpu = gpu
 
     if args.gpu is not None:
