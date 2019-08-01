@@ -1,3 +1,4 @@
+# from https://github.com/pytorch/examples/tree/master/imagenet
 import argparse
 import os
 import random
@@ -30,6 +31,9 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet18)')
+"""
+--arch ARCH, -a ARCH  model architecture: alexnet | densenet121 | densenet161 | densenet169 | densenet201 | resnet101 | resnet152 | resnet18 | resnet34 | resnet50 | squeezenet1_0 | squeezenet1_1 | vgg11 | vgg11_bn | vgg13 | vgg13_bn | vgg16 | vgg16_bn | vgg19 | vgg19_bn (default: resnet18)
+"""
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=90, type=int, metavar='N',
@@ -43,6 +47,9 @@ parser.add_argument('-b', '--batch-size', default=256, type=int,
                          'using Data Parallel or Distributed Data Parallel')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
+"""
+The default learning rate schedule starts at 0.1 and decays by a factor of 10 every 30 epochs. This is appropriate for ResNet and models with batch normalization, but too high for AlexNet and VGG. Use 0.01 as the initial learning rate for AlexNet or VGG
+"""
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
@@ -234,17 +241,17 @@ def main_worker(gpu, ngpus_per_node, args):
         validate(val_loader, model, criterion, args)
         return
 
+    if args.sparsification:
+        args.epsilon = [torch.zeros(layer.numel()).cuda(args.gpu) for layer in model.parameters()]
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
         
-        if args.sparsification:
-            args.epsilon = [torch.zeros(layer.numel()).cuda(args.gpu) for layer in model.parameters()]
-        
         # train for one epoch
+        print('epoch {} started at time {}'.format(epoch, time.time()))
         train(train_loader, model, criterion, optimizer, epoch, args)
-
+        print('epoch {} finished at time {}'.format(epoch, time.time()))
         # evaluate on validation set
         acc1 = validate(val_loader, model, criterion, args)
 
@@ -264,6 +271,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
+    global global_step
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
